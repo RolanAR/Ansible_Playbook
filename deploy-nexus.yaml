@@ -1,0 +1,139 @@
+---
+# - name: Configure host
+#   hosts: nexus_server
+#   become: yes
+#   gather_facts: no
+#   vars_files:
+#   - project-vars
+#   tasks:
+#   - name: Copies the public ssh-key to a host
+#     become: yes
+#     authorized_key:
+#       user: "{{ansible_user}}"
+#       key: "{{ lookup('file', '/home/rolan/.ssh/id_ed25519.pub') }}"
+#       state: present
+
+- name: Install java and net-tools
+  hosts: nexus_server
+  become: yes  # This is to become root on the remote host
+  gather_facts: no
+  vars_files:
+  - project-vars
+  tasks: 
+
+  - name: Update apt repo end cashe
+    apt: update_cache=yes force_apt_get=yes cache_valid_time=3600
+  - name: Install Java 8, acl
+    apt:
+      pkg:
+        - openjdk-8-jre-headless
+        - net-tools
+        - acl # Устранение сообщений об ошибках с разрешением на доступ к временным файлам для
+              # работы новым пользователя
+
+- name: Download and unpack nexus installer
+  hosts: nexus_server
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Check nexus folder stats (проверяем наличие папки Nexus)
+      stat:
+        path: /opt/nexus
+      register: stat_result
+
+    - name: Download nexus
+      get_url: 
+        url: https://download.sonatype.com/nexus/3/latest-unix.tar.gz
+        dest: /opt/
+      register: download_result  # Сохраняем результат выполнения задачи в переменной
+      when: not stat_result.stat.exists # таска Download nexus выполняется если нет папкие Nexus 
+    
+    # - name: Get downloaded file name
+    #   set_fact:
+    #     downloaded_file_name: "{{ download_result.dest | basename }}"
+    # - name: Display downloaded file name
+    #   debug:
+    #     var: downloaded_file_name
+
+    - name: Untar nexus installer # выполняется если нет папки Nexus (when:)
+      unarchive: 
+        src: "{{download_result.dest}}"
+        dest: /opt/
+        remote_src: yes
+      when: not stat_result.stat.exists 
+
+    - name: Fid nexus folder # выполняется если нет папки Nexus (when:)
+      find: 
+        paths: /opt
+        pattern: "nexus-*"
+        file_type: directory
+      register: find_result
+      when: not stat_result.stat.exists
+    # - debug: msg={{find_result}}
+    # - debug: msg={{stat_result.stat.exists}}
+    - name: Rename nexus folder # выполняется если нет папки Nexus (when:)
+      shell: mv {{find_result.files[0].path}} /opt/nexus
+      when: not stat_result.stat.exists
+
+- name: Create nexus user to own nexus folders
+  hosts: nexus_server
+  become: yes
+  tasks:
+    - name: Create nexus group
+      group:
+        name: nexus
+        state: present
+    - name: Creat nexus user
+      user:
+        name: nexus
+        group: nexus
+    - name: Make nexus user owner of nexus folder
+      file:
+        path: /opt/nexus
+        state: directory
+        owner: nexus
+        group: nexus
+        recurse: yes
+    - name: Make nexus user owner of sonatype-work folder
+      file:
+        path: /opt/sonatype-work
+        state: directory
+        owner: nexus
+        group: nexus
+        recurse: yes
+
+- name: Start nexus with nexus user
+  hosts: nexus_server
+  become: yes
+  become_user: nexus
+  gather_facts: no
+  tasks:
+    - name: Set run_as_user nexus
+      # blockinfile: 
+      #   path: /opt/nexus/bin/nexus.rc
+      #   block: |
+          # run_as_user="nexus"
+      lineinfile: 
+        path: /opt/nexus/bin/nexus.rc
+        regexp: '^#run_as_user=""'
+        line: run_as_user="nexus"
+    - name: Start nexus
+      command: /opt/nexus/bin/nexus start
+
+- name: Verify nexus running
+  hosts: nexus_server
+  # become: yes
+  # become_user: nexus
+  gather_facts: no
+  tasks:
+    - name: Check with ps
+      shell: ps aux | grep nexus
+      register: app_status # записать результат предыдущей команды
+    - debug: msg={{ app_status.stdout_lines }} # распечатать
+    - name: Wait one minute
+      pause:
+        minutes: 1
+    - name: Check with netstat
+      shell: netstat -plnt
+      register: app_status 
+    - debug: msg={{ app_status.stdout_lines }}
