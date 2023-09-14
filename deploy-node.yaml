@@ -1,0 +1,79 @@
+---
+- name: Install node end npm
+  hosts: all
+  become: yes  # This is to become root on the remote host
+  vars_files:
+  - project-vars
+  tasks: 
+  - name: Update apt repo end cashe
+    apt: update_cache=yes force_apt_get=yes cache_valid_time=3600
+  - name: Install nodejs end npm, acl
+    apt:
+      pkg:
+        - nodejs
+        - npm
+        - acl # Устранение сообщений об ошибках временных файлов для
+              # работы новым пользователя
+
+- name: Greate new linux user for mode app
+  hosts: all
+  become: yes
+  vars_files:
+    - project-vars
+  tasks:
+  - name: Greate linux user
+    user:
+      name: "{{linux_name}}" #user1
+      comment: "{{linux_name}} adm"
+      state: present
+      group: adm
+
+  - name: Copies the public key for the user1 user
+    become: yes
+    authorized_key:
+      user: "{{linux_name}}"
+      key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP1U5asRY+ZgtF+BNaxiiTlwgb44FP4xIqKBnEvQhMVo rolan@rolan-ThinkPad-X280
+      state: present
+
+- name: Deploy nodejs app
+  hosts: all
+  become: yes # повышаем привелегии нового юзера
+  become_user: "{{linux_name}}" # переключиться на пользователя user1
+  gather_facts: no
+  vars_files:
+    - project-vars
+  tasks:
+#  - name: Copy nodejs folder to a server
+#    copy: 
+#      src: /home/rolan/Documents/Dropbox/Documents/bootcamp-projects/simple-nodejs-master/nodejs-app-1.0.0.tgz
+#      dest: /home/user1/app-1.0.0.tgz
+  - name: Unpack the nodejs file to a server
+    unarchive: 
+      src: "{{location}}/nodejs-app-{{version}}.tgz" # /home/rolan/Documents/Dropbox/Documents/bootcamp-projects/simple-nodejs-master/nodejs-app-1.0.0.tgz
+      #в кавычках нужно только после двоеточия, чобы ансибл считал что это переменная
+      dest: "{{user_home_dir}}" #/home/user1/ # распаковка напрямую с локального компа 
+                          # на сервер без предварительного копрования
+#        remote_src: yes # указываем что файл 
+                        # находтся на удаленном источнике 
+                        # т.е. на сервере, пименяется после копирования архива на сервер
+
+  - name: Установка завсимостей прложения
+    npm:
+      path: "{{user_home_dir}}/package"
+  - name: Start app
+    command: # node "{{user_home_dir}}/package/app/server.js" или 
+      chdir: "{{user_home_dir}}/package/app"
+      cmd: node server.js # в таком виде выполнение node server.js
+      # блокирует терминал на сервере и плейбоок не завершает свою работу
+      # для этого нужно запускать команду асинхронно в фоновом режиме, следующими командами
+    async: 1000 # асинхронность
+    poll: 0 # опрос выполнения команды в асинхронном режиме
+      # ссылка на хелп https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_async.html
+  - name: Ensure app is running (убедиться что приложение запущено)
+    shell: ps aux | grep node # shell: и command: похожи, но
+      # command: позволяет выполнять не все команды поэтому более защищен,
+      # а в shell: можно выполнять все команды, в том числе опасные
+    register: app_status # записать результат предыдущей команды
+      # в переменную-словарь app_status
+  - debug: msg={{ app_status.stdout_lines }} # распечатать
+    # содержимое переменноq-словаря относящееся к выводу на экран stdout_lines 

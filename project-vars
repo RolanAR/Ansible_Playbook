@@ -1,0 +1,4 @@
+location: /home/rolan/Documents/Dropbox/Documents/bootcamp-projects/simple-nodejs-master
+version: 1.0.0
+linux_name: user1
+user_home_dir: /home/{{linux_name}}
